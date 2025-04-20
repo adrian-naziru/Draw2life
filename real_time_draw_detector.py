@@ -1,22 +1,22 @@
-import cv2 #pip3 install opencv-python
+
+import cv2
 import numpy as np
 
-# Load AR overlays (images with transparency)
-overlays = {
+SHAPE_IMAGES = {
     "Triangle": cv2.imread("data/shapes/triangle.png", cv2.IMREAD_UNCHANGED),
     "Square/Rectangle": cv2.imread("data/shapes/square.png", cv2.IMREAD_UNCHANGED),
     "Circle/Rounded shape": cv2.imread("data/shapes/circle.png", cv2.IMREAD_UNCHANGED)
 }
 
-def preprocess_frame(frame):
+def preprocess(frame):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    _, thresh = cv2.threshold(blurred, 100, 255, cv2.THRESH_BINARY_INV)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    _, thresh = cv2.threshold(blur, 100, 255, cv2.THRESH_BINARY_INV)
     return thresh
 
-def classify_and_get_contour(thresh_img):
+def classify_shape(thresh_img):
     contours, _ = cv2.findContours(thresh_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if len(contours) == 0:
+    if not contours:
         return "Nothing detected", None
 
     largest = max(contours, key=cv2.contourArea)
@@ -32,63 +32,56 @@ def classify_and_get_contour(thresh_img):
     else:
         return "Other shape", largest
 
-def overlay_image_alpha(img, overlay, x, y):
-    """ Overlay `overlay` onto `img` at (x, y) with alpha channel """
+def overlay_image(frame, overlay, x, y):
     h, w = overlay.shape[:2]
-
-    if x + w > img.shape[1] or y + h > img.shape[0]:
-        return img  # Don't overlay if it's out of bounds
-
+    if x + w > frame.shape[1] or y + h > frame.shape[0]:
+        return frame
     alpha_s = overlay[:, :, 3] / 255.0
     alpha_l = 1.0 - alpha_s
-
-    for c in range(0, 3):
-        img[y:y+h, x:x+w, c] = (alpha_s * overlay[:, :, c] +
-                                alpha_l * img[y:y+h, x:x+w, c])
-    return img
+    for c in range(3):
+        frame[y:y+h, x:x+w, c] = (alpha_s * overlay[:, :, c] + alpha_l * frame[y:y+h, x:x+w, c])
+    return frame
 
 def main():
-    cap = cv2.VideoCapture(1)  # adjust index if needed
-
+    cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
     if not cap.isOpened():
-        print("Could not access the webcam.")
+        print("❌ Cannot access webcam.")
         return
 
-    confirmed_shape = None
+    confirmed = None
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        thresh = preprocess_frame(frame)
-        shape, contour = classify_and_get_contour(thresh)
+        original_frame = frame.copy()
+        thresh = preprocess(frame)
+        shape, contour = classify_shape(thresh)
 
-        if shape in overlays and contour is not None:
+        if shape in SHAPE_IMAGES and contour is not None:
             x, y, w, h = cv2.boundingRect(contour)
-            resized_overlay = cv2.resize(overlays[shape], (w, h))
-            frame = overlay_image_alpha(frame, resized_overlay, x, y)
+            overlay = cv2.resize(SHAPE_IMAGES[shape], (w, h))
+            frame = overlay_image(frame, overlay, x, y)
 
-        # Show instructions & detected shape
-        cv2.putText(frame, f"Detected: {shape}", (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        cv2.putText(frame, "Press 'c' to confirm, 'q' to quit", (10, 470),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
+        cv2.putText(frame, f"Detected: {shape}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
+        cv2.putText(frame, "Press 'c' to confirm, 'q' to quit", (10, 470), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 1)
 
-        if confirmed_shape:
-            cv2.putText(frame, f"Confirmed: {confirmed_shape}", (10, 60),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 215, 0), 2)
+        if confirmed:
+            cv2.putText(frame, f"Confirmed: {confirmed}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,215,0), 2)
 
-        cv2.imshow("AR Simulation", frame)
-
+        cv2.imshow("Shape Detector", frame)
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
             break
         elif key == ord('c') and shape != "Nothing detected":
-            confirmed_shape = shape
-            print(f"[✔] Shape confirmed: {confirmed_shape}")
+            confirmed = shape
+            # Save both the processed threshold image and the original full-color frame
+            cv2.imwrite("runtime/input/saved_drawing.png", thresh)
+            cv2.imwrite("runtime/input/saved_drawing_original.png", original_frame)
             with open("confirmed_shape.txt", "w") as f:
-                f.write(confirmed_shape)
+                f.write(shape)
+            print("[✔] Saved both processed and original image.")
 
     cap.release()
     cv2.destroyAllWindows()
